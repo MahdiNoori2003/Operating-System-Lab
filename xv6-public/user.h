@@ -32,6 +32,14 @@ int set_bjf_params_for_process(int, float, float, float, float);
 void set_bjf_params_for_system(float, float, float, float);
 void print_process_info();
 int set_bjf_priority(int, int);
+void init_prioritylock(void);
+void acquire_prioritylock(void);
+void release_prioritylock(void);
+void print_syscall_count(void);
+void reset_syscall_count(void);
+void *open_sharedmem(int);
+void close_sharedmem(int);
+
 // ulib.c
 int stat(const char *, struct stat *);
 char *strcpy(char *, const char *);

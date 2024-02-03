@@ -6,6 +6,7 @@
 #include "x86.h"
 #include "proc.h"
 #include "spinlock.h"
+#include "shm.h"
 
 #define MIN_RANK 1000000000
 
@@ -123,6 +124,11 @@ found:
   p->bjf_info.arrival_time_ratio = 1;
   p->bjf_info.executed_cycle_ratio = 1;
   p->bjf_info.process_size_ratio = 1;
+
+  for (int i = 0; i < MAX_SHARED_PAGES; i++)
+  {
+    p->shared_addresses[i] = -1;
+  }
 
   return p;
 }
@@ -374,14 +380,15 @@ void scheduler(void)
   c->proc = 0;
   for (;;)
   {
-    // Enable interrupts on this processor.
     for (int i = 0; i < NPROC; i++)
     {
-      if (str_cmp(ptable.proc[i].name, "proc_info") == 0)
+      if (str_cmp(ptable.proc[i].name, "proc_info") || str_cmp(ptable.proc[i].name, "sh"))
       {
-        ptable.proc[i].queue = RR;
+        if (ptable.proc[i].state == RUNNABLE)
+          change_queue(ptable.proc[i].pid, RR);
       }
     }
+    // Enable interrupts on this processor.
     sti();
     acquire(&ptable.lock);
     int found = 0;
@@ -947,4 +954,139 @@ void print_process_info()
       cprintf("\n");
   }
   release(&ptable.lock);
+}
+
+void reset_syscall_count(void)
+{
+  cli();
+  for (int i = 0; i < ncpu; i++)
+    cpus[i].syscall_count = 0;
+  sti();
+  syscall_count_total = 0;
+  __sync_synchronize();
+}
+
+// shared memory definition
+struct shared_memory shm;
+
+// shared memory initialize function
+void shm_init()
+{
+  for (int i = 0; i < MAX_SHARED_PAGES; i++)
+  {
+    shm.shared_pages[i].id = -1;
+    shm.shared_pages[i].frame = (char *)0;
+  }
+
+  initlock(&shm.slk, "spin lock");
+}
+
+// open the shared memory region
+void *shm_open(int id)
+{
+  struct proc *proc = myproc();
+  pde_t *pgdir = proc->pgdir;
+  int page_index = -1;
+
+  acquire(&shm.slk);
+
+  for (int i = 0; i < MAX_SHARED_PAGES; i++)
+  {
+    if (shm.shared_pages[i].id == id)
+    {
+      page_index = i;
+      break;
+    }
+  }
+
+  if (page_index == -1)
+  {
+    int free_index = -1;
+    for (int i = 0; i < MAX_SHARED_PAGES; i++)
+    {
+      if (shm.shared_pages[i].id == -1)
+      {
+        free_index = i;
+        break;
+      }
+    }
+
+    if (free_index == -1)
+    {
+      release(&shm.slk);
+      return (char *)-1;
+    }
+
+    char *page;
+    page = kalloc();
+    memset(page, 0, PGSIZE);
+    mappages(pgdir, (void *)PGROUNDUP(proc->sz), PGSIZE, V2P(page), PTE_W | PTE_U);
+    proc->shared_addresses[free_index] = PGROUNDUP(proc->sz);
+    shm.shared_pages[free_index].frame = page;
+    shm.shared_pages[free_index].ref_count++;
+    shm.shared_pages[free_index].id = id;
+    release(&shm.slk);
+    return (void *)proc->shared_addresses[free_index];
+  }
+  else
+  {
+    if (proc->shared_addresses[page_index] != -1)
+    {
+      release(&shm.slk);
+      return (void *)-1;
+    }
+
+    mappages(pgdir, (void *)PGROUNDUP(proc->sz), PGSIZE, V2P(shm.shared_pages[page_index].frame), PTE_W | PTE_U);
+    proc->shared_addresses[page_index] = PGROUNDUP(proc->sz);
+    shm.shared_pages[page_index].ref_count++;
+    release(&shm.slk);
+    return (void *)proc->shared_addresses[page_index];
+  }
+}
+
+// close the shared memory region
+int shm_close(int id)
+{
+  struct proc *proc = myproc();
+
+  int page_index = -1;
+  acquire(&shm.slk);
+
+  for (int i = 0; i < MAX_SHARED_PAGES; i++)
+  {
+    if (shm.shared_pages[i].id == id)
+    {
+      page_index = i;
+      break;
+    }
+  }
+
+  if (page_index == -1 || proc->shared_addresses[page_index] == -1)
+  {
+    release(&shm.slk);
+    return -1;
+  }
+
+  uint a = PGROUNDUP(proc->shared_addresses[page_index]);
+  pte_t *pte = walkpgdir(proc->pgdir, (char *)a, 0);
+
+  if (!pte)
+    a = PGADDR(PDX(a) + 1, 0, 0) - PGSIZE;
+  else if ((*pte & PTE_P) != 0)
+  {
+    *pte = 0;
+  }
+
+  proc->shared_addresses[page_index] = -1;
+
+  shm.shared_pages[page_index].ref_count--;
+  if (shm.shared_pages[page_index].ref_count == 0)
+  {
+    kfree(shm.shared_pages[page_index].frame);
+    shm.shared_pages[page_index].id = -1;
+    shm.shared_pages[page_index].frame = (void *)0;
+  }
+
+  release(&shm.slk);
+  return 0;
 }

@@ -159,3 +159,52 @@ int sys_set_bjf_priority(void)
 
   return set_bjf_priority(pid, priority);
 }
+
+int sys_print_syscall_count()
+{
+  for (int i = 0; i < NCPU; i++)
+  {
+    cprintf("cpu number %d has run %d systemcalls\n", cpus[i].apicid, cpus[i].syscall_count);
+  }
+
+  cprintf("total number of system calls are %d\n", syscall_count_total);
+  return 0;
+}
+
+int sys_reset_syscall_count()
+{
+  reset_syscall_count();
+  return 0;
+}
+
+void *sys_open_sharedmem()
+{
+  int id;
+  char *pointer;
+
+  if (argint(0, &id) < 0)
+    return -1;
+
+  pointer = (char *)shm_open(id);
+
+  if (pointer == (char *)-1)
+  {
+    cprintf("Failed to open shared memory region!\n");
+  }
+  return pointer;
+}
+
+int sys_close_sharedmem()
+{
+  int id;
+
+  if (argint(0, &id) < 0)
+    return -1;
+
+  int res = shm_close(id);
+  if (res == -1)
+  {
+    cprintf("Failed to close shared memory region!\n");
+  }
+  return res;
+}

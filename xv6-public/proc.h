@@ -5,6 +5,7 @@
 #define BJF_PRIORITY_MIN 1
 #define BJF_PRIORITY_MAX 5
 #define BJF_PRIORITY_DEFAULT 3
+#define MAX_SHARED_PAGES 16
 
 // Per-CPU state
 struct cpu
@@ -17,10 +18,12 @@ struct cpu
   int ncli;                  // Depth of pushcli nesting.
   int intena;                // Were interrupts enabled before pushcli?
   struct proc *proc;         // The process running on this cpu or null
+  uint syscall_count;
 };
 
 extern struct cpu cpus[NCPU];
 extern int ncpu;
+extern uint syscall_count_total;
 
 // PAGEBREAK: 17
 //  Saved registers for kernel context switches.
@@ -92,6 +95,7 @@ struct proc
   enum MLFQ queue;
   int last_run;
   int last_in_lcfs;
+  int shared_addresses[MAX_SHARED_PAGES];
 };
 
 // Process memory is laid out contiguously, low addresses first:
@@ -111,3 +115,6 @@ void print_process_info();
 void set_bjf_params_for_system(float priority_ratio, float arrival_time_ratio, float executed_cycles_ratio, float process_size_ratio);
 int set_bjf_params_for_process(int pid, float priority_ratio, float arrival_time_ratio, float executed_cycles_ratio, float process_size_ratio);
 int set_bjf_priority(int pid, int priority);
+void reset_syscall_count(void);
+void *shm_open(int id);
+int shm_close(int id);
